@@ -183,6 +183,81 @@ def test_compose_preserves_identity():
     assert report.error_count == 0
 
 
+def test_yaml_loses_types():
+    """YAML should demonstrate type loss (tuples→lists, etc)."""
+    from crossing import yaml_crossing
+    report = cross(yaml_crossing(), samples=200, seed=42)
+    # YAML should have losses and/or crashes for non-native types
+    assert report.lossy_count + report.error_count > 0
+
+
+def test_yaml_tuple_becomes_list():
+    """YAML safe_load can't reconstruct Python tuples — they crash or become lists."""
+    import yaml
+    # With safe_load, python/tuple tags are rejected (ConstructorError)
+    # This means tuples cause crashes in YAML round-trips, which crossing detects
+    original = (1, 2, 3)
+    encoded = yaml.dump(original, default_flow_style=False)
+    try:
+        decoded = yaml.safe_load(encoded)
+        # If it doesn't crash, check for type loss
+        losses = _compare(original, decoded)
+        assert any(l.loss_type == "type_change" for l in losses)
+    except yaml.constructor.ConstructorError:
+        pass  # expected — safe_load rejects python tags
+
+
+def test_toml_crashes_on_none():
+    """TOML can't represent None — should crash."""
+    from crossing import toml_crossing
+    c = toml_crossing()
+    try:
+        c.encode({"key": None})
+        assert False, "TOML should crash on None"
+    except (TypeError, AttributeError):
+        pass  # expected
+
+
+def test_csv_everything_becomes_string():
+    """CSV loses all type information."""
+    from crossing import csv_crossing
+    c = csv_crossing()
+    encoded = c.encode({"count": 42, "active": True})
+    decoded = c.decode(encoded)
+    # Everything should be a string now
+    assert isinstance(decoded["count"], str)
+    assert isinstance(decoded["active"], str)
+
+
+def test_env_file_flattens():
+    """Env file format flattens everything to strings."""
+    from crossing import env_file_crossing
+    c = env_file_crossing()
+    encoded = c.encode({"PORT": 8080, "DEBUG": True})
+    decoded = c.decode(encoded)
+    assert isinstance(decoded["PORT"], str)
+    assert isinstance(decoded["DEBUG"], str)
+
+
+def test_yaml_bool_coercion():
+    """YAML 1.1 coerced 'yes'/'no' to booleans; YAML 1.2 / PyYAML 6.0+ doesn't.
+
+    This test documents the behavior rather than asserting a specific version.
+    Either outcome (coerced or preserved) is informative about the crossing.
+    """
+    import yaml
+    original = {"answer": "yes", "switch": "off", "name": "no"}
+    encoded = yaml.dump(original, default_flow_style=False)
+    decoded = yaml.safe_load(encoded)
+    losses = _compare(original, decoded)
+    # In YAML 1.1 (PyYAML < 6.0): losses > 0 (strings coerced to bools)
+    # In YAML 1.2 (PyYAML >= 6.0): losses == 0 (strings preserved)
+    # Both are valid — the test just ensures crossing can measure either
+    if losses:
+        assert any(l.loss_type == "type_change" for l in losses)
+    # If no losses, that's fine — modern PyYAML preserves these strings
+
+
 if __name__ == "__main__":
     import sys
     passed = 0

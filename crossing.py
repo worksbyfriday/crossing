@@ -533,34 +533,150 @@ def string_truncation_crossing(max_length: int = 255,
     return Crossing(encode=encode, decode=lambda d: d, name=name)
 
 
+def yaml_crossing(name: str = "YAML round-trip") -> Crossing:
+    """Test YAML serialization/deserialization.
+
+    YAML has interesting behaviors: it auto-parses unquoted strings as
+    booleans (yes/no/on/off), numbers, dates, and null. This makes it
+    one of the lossiest common serialization formats.
+    """
+    import yaml
+
+    return Crossing(
+        encode=lambda d: yaml.dump(d, default_flow_style=False),
+        decode=lambda s: yaml.safe_load(s),
+        name=name,
+    )
+
+
+def toml_crossing(name: str = "TOML round-trip") -> Crossing:
+    """Test TOML serialization/deserialization.
+
+    TOML is strict about types but has limitations: no None/null,
+    no top-level arrays/scalars (must be a table), datetime is
+    first-class but many Python types aren't representable.
+    """
+    import tomllib
+    import tomli_w
+
+    def encode(d: Any) -> str:
+        if not isinstance(d, dict):
+            d = {"_value": d}
+        return tomli_w.dumps(d)
+
+    def decode(s: str) -> Any:
+        result = tomllib.loads(s)
+        if "_value" in result and len(result) == 1:
+            return result["_value"]
+        return result
+
+    return Crossing(encode=encode, decode=decode, name=name)
+
+
+def csv_crossing(name: str = "CSV round-trip") -> Crossing:
+    """Test CSV serialization — everything becomes strings, structure is lost.
+
+    CSV is perhaps the lossiest common format: no type information,
+    no nesting, no null distinction. But it's ubiquitous.
+    """
+    import csv
+    import io
+
+    def encode(d: Any) -> str:
+        output = io.StringIO()
+        if isinstance(d, dict):
+            # Flatten: only string keys, stringify values
+            flat = {str(k): str(v) for k, v in d.items()}
+            writer = csv.DictWriter(output, fieldnames=list(flat.keys()))
+            writer.writeheader()
+            writer.writerow(flat)
+        elif isinstance(d, (list, tuple)):
+            writer = csv.writer(output)
+            writer.writerow(d)
+        else:
+            writer = csv.writer(output)
+            writer.writerow([d])
+        return output.getvalue()
+
+    def decode(s: str) -> Any:
+        lines = s.strip().split("\n")
+        if len(lines) >= 2:
+            # Has header — parse as DictReader
+            reader = csv.DictReader(io.StringIO(s))
+            rows = list(reader)
+            if len(rows) == 1:
+                return dict(rows[0])
+            return [dict(r) for r in rows]
+        else:
+            # Single row — parse as list
+            reader = csv.reader(io.StringIO(s))
+            rows = list(reader)
+            if rows and len(rows[0]) == 1:
+                return rows[0][0]
+            return rows[0] if rows else []
+
+    return Crossing(encode=encode, decode=decode, name=name)
+
+
+def env_file_crossing(name: str = "env file round-trip") -> Crossing:
+    """Test .env file format — flat string→string, no types, no nesting.
+
+    Simulates the common pattern of writing config to .env files.
+    """
+    def encode(d: Any) -> str:
+        if not isinstance(d, dict):
+            return f"VALUE={d}\n"
+        lines = []
+        for k, v in d.items():
+            lines.append(f"{k}={v}")
+        return "\n".join(lines) + "\n"
+
+    def decode(s: str) -> Any:
+        result = {}
+        for line in s.strip().split("\n"):
+            if "=" in line:
+                key, _, value = line.partition("=")
+                result[key] = value
+        if "VALUE" in result and len(result) == 1:
+            return result["VALUE"]
+        return result
+
+    return Crossing(encode=encode, decode=decode, name=name)
+
+
 if __name__ == "__main__":
     print("crossing — detect silent information loss at system boundaries\n")
 
-    # Test JSON round-trip (lenient)
-    report = cross(json_crossing(), samples=500, seed=42)
-    report.print()
+    crossings_to_test = [
+        (json_crossing(), 500),
+        (json_crossing_strict(), 500),
+        (pickle_crossing(), 500),
+        (url_query_crossing(), 200),
+        (string_truncation_crossing(255), 500),
+        (yaml_crossing(), 500),
+        (csv_crossing(), 200),
+        (env_file_crossing(), 200),
+    ]
 
-    # Test JSON round-trip (strict)
-    report = cross(json_crossing_strict(), samples=500, seed=42)
-    report.print()
+    for c, n in crossings_to_test:
+        report = cross(c, samples=n, seed=42)
+        report.print()
 
-    # Test pickle (should be nearly lossless)
-    report = cross(pickle_crossing(), samples=500, seed=42)
-    report.print()
+    # Composed pipelines
+    print("\n--- Composed Pipelines ---\n")
 
-    # Test URL query strings
-    report = cross(url_query_crossing(), samples=200, seed=42)
-    report.print()
-
-    # Test string truncation (simulates DB column)
-    report = cross(string_truncation_crossing(255), samples=500, seed=42)
-    report.print()
-
-    # Test composed pipeline: JSON → truncation → JSON
-    # (simulates: serialize, store in DB varchar, deserialize)
+    # JSON → truncation (API → DB varchar)
     pipeline = compose(
         json_crossing("JSON serialize"),
         string_truncation_crossing(100, "DB varchar(100)"),
     )
     report = cross(pipeline, samples=500, seed=42)
+    report.print()
+
+    # YAML → JSON (config file → API payload)
+    pipeline = compose(
+        yaml_crossing("YAML config"),
+        json_crossing("JSON API"),
+    )
+    report = cross(pipeline, samples=200, seed=42)
     report.print()

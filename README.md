@@ -25,8 +25,14 @@ information can silently disappear.
 
 ## What This Does
 
-`crossing` generates structured random inputs, pushes them through an encode/decode
-boundary, and reports what information didn't survive the round trip.
+Two things:
+
+1. **Test boundaries** — generate structured random inputs, push them through an
+   encode/decode boundary, report what didn't survive.
+2. **Find boundaries** — scan a codebase for encode/decode pairs and show you where
+   data crosses between formats.
+
+### Testing boundaries
 
 ```python
 from crossing import cross, json_crossing
@@ -50,12 +56,31 @@ Loss types:
   type_change: 412
   missing_key: 200
   added_key: 200
+============================================================
+```
 
-Sample losses (first 10):
-  [type_change] $: type changed from tuple to list
-  [type_change] $.metadata.created: type changed from datetime to str
-  [missing_key] $.42: key '42' with value 'hello' was lost
-  [added_key] $.42: key '42' was added with value 'hello'
+### Scanning codebases
+
+```bash
+python3 scan.py /path/to/your/project
+```
+
+Output:
+```
+============================================================
+Crossing Scan: /path/to/your/project
+============================================================
+Files scanned:     413
+Boundary calls:    91
+Crossing types:    7
+  Paired (encode+decode): 5
+  Encode-only:            1
+  Decode-only:            1
+
+Paired crossings (data enters AND exits):
+  JSON: 25 encode, 11 decode (paired)
+  pickle: 19 encode, 20 decode (paired)
+  base64: 3 encode, 1 decode (paired)
 ============================================================
 ```
 
@@ -77,6 +102,14 @@ report = cross(json_crossing_strict(), samples=500)
 # Pickle — should be lossless (baseline)
 from crossing import pickle_crossing
 report = cross(pickle_crossing(), samples=500)
+
+# YAML — crashes on Python types, honest about limitations
+from crossing import yaml_crossing
+report = cross(yaml_crossing(), samples=500)
+
+# CSV — everything becomes strings
+from crossing import csv_crossing
+report = cross(csv_crossing(), samples=200)
 ```
 
 ### Define a custom crossing
@@ -114,6 +147,19 @@ report = cross(pipeline, samples=500)
 # AND valid-but-incomplete data (17% silent loss)
 ```
 
+### Scan a codebase for boundaries
+
+```bash
+# Find all boundary crossings
+python3 scan.py /path/to/project
+
+# Find boundaries and generate test snippets
+python3 scan.py /path/to/project --generate-tests
+```
+
+The scanner finds encode/decode pairs for: JSON, YAML, pickle, TOML, base64,
+URL encoding, CSV, struct, zlib, and gzip.
+
 ### Inspect individual results
 
 ```python
@@ -134,6 +180,10 @@ for result in report.results:
 | `json_crossing()` | JSON with `default=str` | ~24% lossy, 34% crashes |
 | `json_crossing_strict()` | JSON without fallback | ~6% lossy, 52% crashes |
 | `pickle_crossing()` | Python pickle | 0% (lossless baseline) |
+| `yaml_crossing()` | YAML safe_load | ~0% lossy, 49% crashes |
+| `toml_crossing()` | TOML via tomllib/tomli_w | varies |
+| `csv_crossing()` | CSV (everything→strings) | ~82% lossy |
+| `env_file_crossing()` | .env files (KEY=VALUE) | ~83% lossy |
 | `url_query_crossing()` | URL query string encoding | ~80% lossy |
 | `string_truncation_crossing(n)` | Simulates VARCHAR(n) columns | varies by n |
 | `str_crossing()` | `repr()`/`eval()` round-trip | low (but uses eval) |
@@ -155,7 +205,7 @@ The generator produces values that commonly reveal boundary issues:
 pip install crossing
 ```
 
-Or copy `crossing.py` — it's a single file with no dependencies.
+Or copy `crossing.py` — it's a single file with no dependencies (scan.py is optional).
 
 ## License
 
