@@ -1,7 +1,7 @@
 """Tests for crossing — verifying it catches known boundary issues."""
 
 from crossing import (
-    Crossing, CrossingReport, Loss, cross, _compare,
+    Crossing, CrossingReport, Loss, cross, _compare, compose,
     json_crossing, json_crossing_strict, pickle_crossing,
     string_truncation_crossing,
 )
@@ -160,6 +160,27 @@ def test_custom_crossing():
     c = Crossing(encode=lower_encode, decode=lambda d: d, name="lowercase")
     losses = _compare("Hello World", lower_encode("Hello World"))
     assert any(l.loss_type == "value_change" for l in losses)
+
+
+def test_compose_chains_crossings():
+    """Composed crossings should reveal cumulative losses."""
+    pipeline = compose(
+        json_crossing("step 1"),
+        string_truncation_crossing(50, "step 2"),
+    )
+    assert "step 1" in pipeline.name
+    assert "step 2" in pipeline.name
+    report = cross(pipeline, samples=100, seed=42)
+    # Should have some losses (type changes from JSON + truncation)
+    assert report.lossy_count + report.error_count > 0
+
+
+def test_compose_preserves_identity():
+    """Composing a lossless crossing with itself should still be lossless."""
+    pipeline = compose(pickle_crossing(), pickle_crossing())
+    report = cross(pipeline, samples=50, seed=42)
+    assert report.lossy_count == 0
+    assert report.error_count == 0
 
 
 if __name__ == "__main__":

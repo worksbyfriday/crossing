@@ -156,6 +156,36 @@ class Crossing:
     name: str = "unnamed crossing"
 
 
+def compose(*crossings: Crossing, name: str | None = None) -> Crossing:
+    """Chain multiple crossings into a single crossing.
+
+    Data passes through each crossing's encode in order,
+    then through each decode in reverse order. This models
+    real-world data pipelines: Python → JSON → HTTP → DB → HTTP → JSON → Python.
+
+    The composed crossing reveals cumulative information loss
+    across the entire pipeline, not just individual hops.
+    """
+    if not crossings:
+        raise ValueError("Need at least one crossing to compose")
+
+    composed_name = name or " → ".join(c.name for c in crossings)
+
+    def encode(d: Any) -> Any:
+        result = d
+        for c in crossings:
+            result = c.encode(result)
+        return result
+
+    def decode(d: Any) -> Any:
+        result = d
+        for c in reversed(crossings):
+            result = c.decode(result)
+        return result
+
+    return Crossing(encode=encode, decode=decode, name=composed_name)
+
+
 def _generate_scalar() -> Any:
     """Generate a random scalar value that might reveal boundary issues."""
     generators = [
@@ -524,4 +554,13 @@ if __name__ == "__main__":
 
     # Test string truncation (simulates DB column)
     report = cross(string_truncation_crossing(255), samples=500, seed=42)
+    report.print()
+
+    # Test composed pipeline: JSON → truncation → JSON
+    # (simulates: serialize, store in DB varchar, deserialize)
+    pipeline = compose(
+        json_crossing("JSON serialize"),
+        string_truncation_crossing(100, "DB varchar(100)"),
+    )
+    report = cross(pipeline, samples=500, seed=42)
     report.print()
