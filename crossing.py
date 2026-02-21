@@ -421,7 +421,8 @@ def _compare(original: Any, result: Any, path: str = "$") -> list[Loss]:
     return losses
 
 
-def cross(crossing: Crossing, samples: int = 100, seed: int | None = None) -> CrossingReport:
+def cross(crossing: Crossing, samples: int = 100, seed: int | None = None,
+          inputs: list[Any] | None = None) -> CrossingReport:
     """
     Test a boundary crossing by generating random inputs and checking
     whether information survives the round trip.
@@ -430,6 +431,8 @@ def cross(crossing: Crossing, samples: int = 100, seed: int | None = None) -> Cr
         crossing: The Crossing to test
         samples: Number of random inputs to generate
         seed: Random seed for reproducibility
+        inputs: Optional list of specific inputs to test alongside random ones.
+                These are tested first, then random samples fill the remainder.
 
     Returns:
         CrossingReport with all detected losses
@@ -439,7 +442,24 @@ def cross(crossing: Crossing, samples: int = 100, seed: int | None = None) -> Cr
 
     report = CrossingReport(name=crossing.name)
 
-    for _ in range(samples):
+    # Test user-provided inputs first
+    if inputs:
+        for original in inputs:
+            try:
+                encoded = crossing.encode(original)
+                decoded = crossing.decode(encoded)
+                losses = _compare(original, decoded)
+                report.results.append(SampleResult(
+                    input_value=original, output_value=decoded, losses=losses,
+                ))
+            except Exception as e:
+                report.results.append(SampleResult(
+                    input_value=original, output_value=None, error=e,
+                ))
+
+    # Fill remaining with random samples
+    remaining = max(0, samples - len(report.results))
+    for _ in range(remaining):
         original = _generate_value()
         try:
             encoded = crossing.encode(original)
@@ -452,6 +472,174 @@ def cross(crossing: Crossing, samples: int = 100, seed: int | None = None) -> Cr
             report.results.append(SampleResult(
                 input_value=original, output_value=None, error=e,
             ))
+
+    return report
+
+
+@dataclass
+class DiffResult:
+    """Result of comparing two crossings on the same input."""
+    input_value: Any
+    output_a: Any
+    output_b: Any
+    a_losses: list[Loss]
+    b_losses: list[Loss]
+    divergences: list[Loss]  # differences between the two outputs
+    a_error: Optional[Exception] = None
+    b_error: Optional[Exception] = None
+
+    @property
+    def equivalent(self) -> bool:
+        """Both crossings behaved the same way — same output or same error."""
+        return not self.divergences
+
+    @property
+    def one_crashed(self) -> bool:
+        """One crossing errored and the other didn't."""
+        return (self.a_error is None) != (self.b_error is None)
+
+
+@dataclass
+class DiffReport:
+    """Results from comparing two crossings."""
+    name_a: str
+    name_b: str
+    results: list[DiffResult] = field(default_factory=list)
+
+    @property
+    def total_samples(self) -> int:
+        return len(self.results)
+
+    @property
+    def equivalent_count(self) -> int:
+        return sum(1 for r in self.results if r.equivalent)
+
+    @property
+    def divergent_count(self) -> int:
+        return sum(1 for r in self.results if not r.equivalent)
+
+    @property
+    def a_only_lossy(self) -> int:
+        """Inputs where A lost info but B didn't."""
+        return sum(1 for r in self.results if r.a_losses and not r.b_losses
+                   and r.a_error is None and r.b_error is None)
+
+    @property
+    def b_only_lossy(self) -> int:
+        """Inputs where B lost info but A didn't."""
+        return sum(1 for r in self.results if r.b_losses and not r.a_losses
+                   and r.a_error is None and r.b_error is None)
+
+    def print(self):
+        """Print a human-readable diff report."""
+        print(f"\n{'='*60}")
+        print(f"Differential Report: {self.name_a} vs {self.name_b}")
+        print(f"{'='*60}")
+        print(f"Samples tested:    {self.total_samples}")
+        print(f"Equivalent:        {self.equivalent_count} ({self.equivalent_count/self.total_samples:.0%})")
+        print(f"Divergent:         {self.divergent_count} ({self.divergent_count/self.total_samples:.0%})")
+        print(f"  {self.name_a} lossier: {self.a_only_lossy}")
+        print(f"  {self.name_b} lossier: {self.b_only_lossy}")
+
+        divergent = [r for r in self.results if not r.equivalent]
+        if divergent:
+            print(f"\nSample divergences (first 5):")
+            for r in divergent[:5]:
+                print(f"  Input: {repr(r.input_value)[:80]}")
+                if r.a_error:
+                    print(f"    {self.name_a}: ERROR — {r.a_error}")
+                else:
+                    print(f"    {self.name_a}: {repr(r.output_a)[:80]} ({len(r.a_losses)} losses)")
+                if r.b_error:
+                    print(f"    {self.name_b}: ERROR — {r.b_error}")
+                else:
+                    print(f"    {self.name_b}: {repr(r.output_b)[:80]} ({len(r.b_losses)} losses)")
+
+        print(f"{'='*60}\n")
+
+
+def diff(a: Crossing, b: Crossing, samples: int = 100,
+         seed: int | None = None, inputs: list[Any] | None = None) -> DiffReport:
+    """
+    Compare two crossings on the same inputs.
+
+    Finds cases where one crossing preserves information that the other loses,
+    or where they produce different outputs from the same input. Useful for:
+    - Comparing stdlib json vs orjson
+    - Comparing two versions of a serializer
+    - Validating a migration (old format → new format)
+
+    Args:
+        a: First crossing
+        b: Second crossing
+        samples: Number of random inputs
+        seed: Random seed for reproducibility
+        inputs: Optional specific inputs to test alongside random ones
+
+    Returns:
+        DiffReport showing where the crossings diverge
+    """
+    if seed is not None:
+        random.seed(seed)
+
+    report = DiffReport(name_a=a.name, name_b=b.name)
+
+    test_inputs: list[Any] = []
+    if inputs:
+        test_inputs.extend(inputs)
+
+    remaining = max(0, samples - len(test_inputs))
+    for _ in range(remaining):
+        test_inputs.append(_generate_value())
+
+    for original in test_inputs:
+        a_output = None
+        b_output = None
+        a_losses: list[Loss] = []
+        b_losses: list[Loss] = []
+        a_error = None
+        b_error = None
+
+        try:
+            a_encoded = a.encode(original)
+            a_output = a.decode(a_encoded)
+            a_losses = _compare(original, a_output)
+        except Exception as e:
+            a_error = e
+
+        try:
+            b_encoded = b.encode(original)
+            b_output = b.decode(b_encoded)
+            b_losses = _compare(original, b_output)
+        except Exception as e:
+            b_error = e
+
+        # Compare the two outputs to each other
+        divergences: list[Loss] = []
+        if a_error is None and b_error is None:
+            divergences = _compare(a_output, b_output)
+        elif a_error is not None and b_error is not None:
+            # Both crashed — same behavior, not a divergence
+            # (unless they crashed differently)
+            if type(a_error) != type(b_error) or str(a_error) != str(b_error):
+                divergences = [Loss(a_output, b_output, "$", "error_divergence",
+                                    f"different errors: {a_error} vs {b_error}")]
+        else:
+            # One crashed, one didn't — that's a divergence
+            crashed = a_error if a_error is not None else b_error
+            divergences = [Loss(a_output, b_output, "$", "error_divergence",
+                                f"one crossing crashed: {crashed}")]
+
+        report.results.append(DiffResult(
+            input_value=original,
+            output_a=a_output,
+            output_b=b_output,
+            a_losses=a_losses,
+            b_losses=b_losses,
+            divergences=divergences,
+            a_error=a_error,
+            b_error=b_error,
+        ))
 
     return report
 

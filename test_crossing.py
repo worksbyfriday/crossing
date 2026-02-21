@@ -1,7 +1,8 @@
 """Tests for crossing — verifying it catches known boundary issues."""
 
 from crossing import (
-    Crossing, CrossingReport, Loss, cross, _compare, compose,
+    Crossing, CrossingReport, Loss, cross, _compare, compose, diff,
+    DiffReport,
     json_crossing, json_crossing_strict, pickle_crossing,
     string_truncation_crossing,
 )
@@ -256,6 +257,63 @@ def test_yaml_bool_coercion():
     if losses:
         assert any(l.loss_type == "type_change" for l in losses)
     # If no losses, that's fine — modern PyYAML preserves these strings
+
+
+def test_custom_inputs():
+    """Users can provide specific inputs alongside random samples."""
+    my_data = [
+        {"user": "alice", "age": 30, "tags": ["admin", "user"]},
+        {"config": {"nested": True, "count": 0}},
+        [1, None, "three"],
+    ]
+    report = cross(json_crossing(), samples=10, inputs=my_data)
+    # Should test at least the 3 custom inputs
+    assert report.total_samples >= 3
+    # Custom inputs + random should equal samples or len(inputs) if larger
+    assert report.total_samples == max(10, len(my_data))
+
+
+def test_custom_inputs_larger_than_samples():
+    """When inputs > samples, all inputs are still tested."""
+    inputs = [{"k": i} for i in range(20)]
+    report = cross(json_crossing(), samples=5, inputs=inputs)
+    # All 20 custom inputs should be tested, no random added
+    assert report.total_samples == 20
+
+
+def test_diff_identical_crossings():
+    """Diffing a crossing against itself should show no divergence."""
+    report = diff(json_crossing("A"), json_crossing("B"), samples=50, seed=42)
+    assert report.divergent_count == 0
+    assert report.equivalent_count == report.total_samples
+
+
+def test_diff_finds_divergence():
+    """Diffing JSON strict vs lenient should find divergence on non-native types."""
+    report = diff(
+        json_crossing("lenient"),
+        json_crossing_strict("strict"),
+        samples=200, seed=42,
+    )
+    # Lenient uses default=str, strict crashes — should have divergences
+    assert report.divergent_count > 0
+
+
+def test_diff_with_custom_inputs():
+    """Diff supports custom inputs."""
+    inputs = [(1, 2, 3), {"key": None}]
+    report = diff(
+        json_crossing("A"),
+        pickle_crossing("B"),
+        samples=5, inputs=inputs,
+    )
+    assert report.total_samples >= 2
+
+
+def test_diff_report_counts():
+    """DiffReport counts should be consistent."""
+    report = diff(json_crossing("A"), pickle_crossing("B"), samples=50, seed=42)
+    assert report.equivalent_count + report.divergent_count == report.total_samples
 
 
 if __name__ == "__main__":
