@@ -1,0 +1,99 @@
+name: 'Crossing Semantic Scanner'
+description: 'Detect semantic boundary crossings in Python exception handling — where the same exception type carries different meanings.'
+author: 'Friday <friday@fridayops.xyz>'
+
+branding:
+  icon: 'shield'
+  color: 'orange'
+
+inputs:
+  path:
+    description: 'Directory to scan'
+    required: false
+    default: '.'
+  min-risk:
+    description: 'Minimum risk level to report (low, medium, elevated, high)'
+    required: false
+    default: 'low'
+  format:
+    description: 'Output format (text, json, markdown)'
+    required: false
+    default: 'text'
+  implicit:
+    description: 'Also detect implicit raises (dict access → KeyError, etc.)'
+    required: false
+    default: 'false'
+  exclude:
+    description: 'Comma-separated glob patterns to exclude (e.g., "tests/*,docs/*")'
+    required: false
+    default: ''
+  fail-on-risk:
+    description: 'Fail the action if crossings at this risk level or above are found (none, low, medium, elevated, high)'
+    required: false
+    default: 'none'
+
+outputs:
+  total-crossings:
+    description: 'Total number of crossings found'
+    value: ${{ steps.scan.outputs.total }}
+  risky-crossings:
+    description: 'Number of elevated/high risk crossings'
+    value: ${{ steps.scan.outputs.risky }}
+  report:
+    description: 'Path to the report file'
+    value: ${{ steps.scan.outputs.report }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.x'
+
+    - name: Install Crossing
+      shell: bash
+      run: pip install ${{ github.action_path }}
+
+    - name: Run semantic scan
+      id: scan
+      shell: bash
+      run: |
+        ARGS="${{ inputs.path }}"
+
+        if [ "${{ inputs.implicit }}" = "true" ]; then
+          ARGS="$ARGS --implicit"
+        fi
+
+        ARGS="$ARGS --format ${{ inputs.format }}"
+        ARGS="$ARGS --min-risk ${{ inputs.min-risk }}"
+
+        # Handle exclude patterns
+        if [ -n "${{ inputs.exclude }}" ]; then
+          IFS=',' read -ra EXCLUDES <<< "${{ inputs.exclude }}"
+          for pattern in "${EXCLUDES[@]}"; do
+            ARGS="$ARGS --exclude $(echo $pattern | xargs)"
+          done
+        fi
+
+        # Handle CI mode based on fail-on-risk
+        if [ "${{ inputs.fail-on-risk }}" != "none" ]; then
+          ARGS="$ARGS --ci --min-risk ${{ inputs.fail-on-risk }}"
+        fi
+
+        # Run scan and capture output
+        REPORT_FILE="${{ runner.temp }}/crossing-report.txt"
+        set +e
+        crossing-semantic $ARGS 2>&1 | tee "$REPORT_FILE"
+        EXIT_CODE=$?
+        set -e
+
+        # Parse summary from output
+        TOTAL=$(grep -oP 'Found \K\d+' "$REPORT_FILE" || echo "0")
+        RISKY=$(grep -oP '\d+(?= risky)' "$REPORT_FILE" || echo "0")
+
+        echo "total=$TOTAL" >> "$GITHUB_OUTPUT"
+        echo "risky=$RISKY" >> "$GITHUB_OUTPUT"
+        echo "report=$REPORT_FILE" >> "$GITHUB_OUTPUT"
+
+        exit $EXIT_CODE

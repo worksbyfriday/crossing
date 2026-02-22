@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "crossing"
-version = "0.2.0"
-description = "Detect silent information loss at system boundaries"
+version = "0.9.0"
+description = "Detect silent information loss and semantic boundary crossings in Python codebases"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.10"
@@ -36,6 +36,7 @@ Repository = "https://github.com/Fridayai700/crossing"
 
 [project.scripts]
 crossing-scan = "scan:main"
+crossing-semantic = "semantic_scan:main"
 
 [tool.setuptools]
-py-modules = ["crossing", "scan"]
+py-modules = ["crossing", "scan", "semantic_scan"]
