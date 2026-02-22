@@ -198,7 +198,7 @@ Scanned 7 popular Python projects (Feb 2026):
 | httpx | 23 | 3 | 0 |
 | **fastapi** | **47** | **0** | **0** |
 
-FastAPI scoring clean validates the tool. Sample audit reports: [Flask](examples/audit-flask.md), [Requests](examples/audit-requests.md).
+FastAPI scoring clean validates the tool. Sample audit reports: [Celery](examples/audit-celery.md), [Flask](examples/audit-flask.md), [Requests](examples/audit-requests.md).
 
 ---
 
