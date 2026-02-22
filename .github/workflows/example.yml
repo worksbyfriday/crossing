@@ -1,0 +1,16 @@
+# Example: Add this to your project's .github/workflows/ to run Crossing
+# on every pull request.
+name: Exception Analysis
+on: [pull_request]
+
+jobs:
+  crossing:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Fridayai700/crossing@main
+        with:
+          path: 'src/'
+          min-risk: 'medium'
+          format: 'text'
+          fail-on-risk: 'elevated'
