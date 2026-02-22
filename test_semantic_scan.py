@@ -698,3 +698,40 @@ def test_message_arg_none_for_non_literal():
     raises, handlers = _scan_code(code)
     assert len(raises) == 1
     assert raises[0].message_arg is None
+
+
+def test_context_captures_enclosing_if():
+    """Context should capture the nearest enclosing if/elif condition."""
+    raises, _ = _scan_code("""
+        def validate(x):
+            if x < 0:
+                raise ValueError("negative")
+            elif x > 100:
+                raise ValueError("too large")
+    """)
+    assert len(raises) == 2
+    assert "if x < 0" in raises[0].context
+    assert "elif x > 100" in raises[1].context
+
+
+def test_context_captures_enclosing_loop():
+    """Context should capture the nearest enclosing for/while loop."""
+    raises, _ = _scan_code("""
+        def process(items):
+            for item in items:
+                if not item:
+                    raise ValueError("empty item")
+    """)
+    assert len(raises) == 1
+    # Should find the if, not the for (if is closer)
+    assert "if not item" in raises[0].context
+
+
+def test_context_default_when_no_control_flow():
+    """Context falls back to function name when no enclosing control flow."""
+    raises, _ = _scan_code("""
+        def boom():
+            raise RuntimeError("oops")
+    """)
+    assert len(raises) == 1
+    assert raises[0].context == "in boom"

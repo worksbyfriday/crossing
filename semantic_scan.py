@@ -533,8 +533,23 @@ class SemanticVisitor(ast.NodeVisitor):
         return None
 
     def _infer_context(self, node: ast.Raise) -> str:
-        """Try to describe what's happening around this raise."""
-        # Look at the enclosing if/for/try to understand context
+        """Try to describe what's happening around this raise.
+
+        Scans backwards from the raise line to find the nearest enclosing
+        control structure (if/elif/for/while) and includes its condition.
+        """
+        lineno = node.lineno
+        for i in range(lineno - 2, max(lineno - 20, -1), -1):
+            if 0 <= i < len(self.source_lines):
+                line = self.source_lines[i].strip()
+                if line.startswith(("if ", "elif ")):
+                    cond = line.rstrip(":")
+                    return f"{cond} → raise in {self._current_function}"
+                elif line.startswith(("for ", "while ")):
+                    loop = line.rstrip(":")
+                    return f"inside {loop} in {self._current_function}"
+                elif line.startswith(("def ", "class ", "except ")):
+                    break  # hit scope boundary, stop
         return f"in {self._current_function}"
 
     def _summarize_handler_body(self, body: list[ast.stmt]) -> str:
