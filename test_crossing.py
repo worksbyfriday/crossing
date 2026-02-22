@@ -1,5 +1,6 @@
 """Tests for crossing — verifying it catches known boundary issues."""
 
+import pytest
 from crossing import (
     Crossing, CrossingReport, Loss, cross, _compare, compose, diff,
     DiffReport,
@@ -186,6 +187,7 @@ def test_compose_preserves_identity():
 
 def test_yaml_loses_types():
     """YAML should demonstrate type loss (tuples→lists, etc)."""
+    pytest.importorskip("yaml")
     from crossing import yaml_crossing
     report = cross(yaml_crossing(), samples=200, seed=42)
     # YAML should have losses and/or crashes for non-native types
@@ -194,7 +196,7 @@ def test_yaml_loses_types():
 
 def test_yaml_tuple_becomes_list():
     """YAML safe_load can't reconstruct Python tuples — they crash or become lists."""
-    import yaml
+    yaml = pytest.importorskip("yaml")
     # With safe_load, python/tuple tags are rejected (ConstructorError)
     # This means tuples cause crashes in YAML round-trips, which crossing detects
     original = (1, 2, 3)
@@ -210,6 +212,7 @@ def test_yaml_tuple_becomes_list():
 
 def test_toml_crashes_on_none():
     """TOML can't represent None — should crash."""
+    pytest.importorskip("tomllib" if __import__("sys").version_info >= (3, 11) else "tomli")
     from crossing import toml_crossing
     c = toml_crossing()
     try:
@@ -246,7 +249,7 @@ def test_yaml_bool_coercion():
     This test documents the behavior rather than asserting a specific version.
     Either outcome (coerced or preserved) is informative about the crossing.
     """
-    import yaml
+    yaml = pytest.importorskip("yaml")
     original = {"answer": "yes", "switch": "off", "name": "no"}
     encoded = yaml.dump(original, default_flow_style=False)
     decoded = yaml.safe_load(encoded)
