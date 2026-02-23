@@ -204,20 +204,23 @@ Inputs: `path`, `min-risk`, `format`, `implicit`, `exclude`, `fail-on-risk`.
 
 ## Benchmarks
 
-Scanned 7 popular Python projects (Feb 2026):
+Scanned 11 popular Python projects (Feb 2026):
 
-| Project | Files | Crossings | High Risk |
-|---|---|---|---|
-| **django** | **902** | **80** | **6** |
-| celery | 161 | 12 | 3 |
-| flask | 24 | 6 | 2 |
-| requests | 18 | 5 | 2 |
-| rich | 100 | 5 | 1 |
-| astroid | 96 | 5 | 0 |
-| httpx | 23 | 3 | 0 |
-| **fastapi** | **47** | **0** | **0** |
+| Project | Files | Crossings | High Risk | Info Loss |
+|---|---|---|---|---|
+| **pydantic** | **402** | **119** | **12** | **22.9 bits** |
+| **sqlalchemy** | **661** | **103** | **16** | **79.8 bits** |
+| django | 902 | 80 | 6 | — |
+| aiohttp | 166 | 53 | 11 | 25.5 bits |
+| click | 62 | 14 | 5 | 7.4 bits |
+| celery | 161 | 12 | 3 | — |
+| flask | 24 | 6 | 2 | — |
+| requests | 18 | 5 | 2 | — |
+| rich | 100 | 5 | 1 | — |
+| astroid | 96 | 5 | 0 | — |
+| **fastapi** | **47** | **0** | **0** | **0 bits** |
 
-FastAPI scoring clean validates the tool. Sample audit reports: [Django](examples/audit-django.md), [Celery](examples/audit-celery.md), [Flask](examples/audit-flask.md), [Requests](examples/audit-requests.md).
+FastAPI scoring clean validates the tool. Sample audit reports: [SQLAlchemy](examples/audit-sqlalchemy.md), [Django](examples/audit-django.md), [Celery](examples/audit-celery.md), [Flask](examples/audit-flask.md), [Requests](examples/audit-requests.md).
 
 ---
 
