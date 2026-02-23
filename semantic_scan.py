@@ -846,6 +846,27 @@ class SemanticVisitor(ast.NodeVisitor):
         return "complex handler"
 
 
+def scan_source(source: str, filename: str = "<input>") -> SemanticScanReport:
+    """Scan a source string for semantic crossings. Returns a full report."""
+    report = SemanticScanReport(root=filename)
+    report.files_scanned = 1
+    try:
+        source_lines = source.split("\n")
+        tree = ast.parse(source, filename=filename)
+        visitor = SemanticVisitor(filename, source_lines)
+        visitor.visit(tree)
+        report.raises = visitor.raises
+        report.handlers = visitor.handlers
+        call_graph = CallGraph(visitor.call_edges) if visitor.call_edges else None
+        report.crossings = analyze_crossings(
+            report.raises, report.handlers, call_graph,
+            exception_parents=visitor.exception_parents or None,
+        )
+    except SyntaxError as e:
+        report.parse_errors = 1
+    return report
+
+
 def scan_file(filepath: str, detect_implicit: bool = False) -> tuple[list[ExceptionRaise], list[ExceptionHandler], list[CallEdge], dict[str, str], list[ImportRecord]]:
     """Scan a single file for exception raise/handle patterns, call edges, exception hierarchy, and imports."""
     try:
