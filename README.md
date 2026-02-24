@@ -192,7 +192,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: Fridayai700/crossing@main
+      - uses: worksbyfriday/crossing@main
         with:
           path: 'src/'
           fail-on-risk: 'elevated'
@@ -221,6 +221,32 @@ Scanned 11 popular Python projects (Feb 2026):
 | **fastapi** | **47** | **0** | **0** | **0 bits** |
 
 FastAPI scoring clean validates the tool. Sample audit reports: [SQLAlchemy](examples/audit-sqlalchemy.md), [Django](examples/audit-django.md), [Celery](examples/audit-celery.md), [Flask](examples/audit-flask.md), [Requests](examples/audit-requests.md).
+
+---
+
+## API
+
+Scan any installed Python package via HTTP:
+
+```bash
+curl https://api.fridayops.xyz/crossing/package/flask
+```
+
+Returns JSON with full crossing analysis, information theory metrics, and risk levels.
+
+**Badge** — embed in your README:
+
+```markdown
+![crossing](https://api.fridayops.xyz/crossing/badge/flask)
+```
+
+![crossing](https://api.fridayops.xyz/crossing/badge/flask)
+
+Other endpoints:
+- `POST /crossing` — scan raw Python source
+- `GET /crossing/example` — demo snippet
+- `GET /crossing/packages` — list of example packages
+- `GET /crossing/badge/{name}` — SVG badge
 
 ---
 
