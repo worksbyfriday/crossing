@@ -155,6 +155,25 @@ report = cross(c, samples=1000)
 report.print()
 ```
 
+### CLI
+
+```bash
+# Test a single format
+crossing test json -n 500 --seed 42
+
+# Test all built-in formats
+crossing test -n 200
+
+# Compare how two formats compose
+crossing compose json csv -n 300
+
+# Measure how loss scales with repeated crossings
+crossing scale json --max-n 5
+
+# List all available crossings
+crossing list
+```
+
 ### Compose Pipelines
 
 ```python
@@ -166,6 +185,29 @@ pipeline = compose(
     string_truncation_crossing(100),
 )
 report = cross(pipeline, samples=500)
+```
+
+### Diff
+
+Compare how two boundaries handle the same data:
+
+```python
+from crossing import diff, json_crossing, pickle_crossing
+
+report = diff(json_crossing(), pickle_crossing(), samples=500)
+print(f"{report.divergent_count} samples differ between JSON and pickle")
+```
+
+### Scaling Analysis
+
+Measure how loss rate changes when data passes through N copies of a boundary:
+
+```python
+from crossing import scaling, json_crossing
+
+sr = scaling(json_crossing(), max_n=5, samples=200)
+# JSON is idempotent: loss happens on first pass, then saturates (exponent ≈ 0)
+# Non-idempotent crossings show positive scaling exponents
 ```
 
 ### Codebase Scanning
