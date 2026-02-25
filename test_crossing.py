@@ -4,6 +4,7 @@ import pytest
 from crossing import (
     Crossing, CrossingReport, Loss, cross, _compare, compose, diff,
     DiffReport, scaling, ScalingReport, triangulate, profile, ProfileReport,
+    full_report, FullReport,
     cli, BUILTIN_CROSSINGS,
     json_crossing, json_crossing_strict, pickle_crossing,
     string_truncation_crossing, str_crossing, csv_crossing,
@@ -436,3 +437,33 @@ def test_cli_unknown_format(capsys):
     cli(["test", "nonexistent"])
     out = capsys.readouterr().out
     assert "Unknown crossing" in out
+
+
+def test_full_report_basic():
+    """Full report should contain test, profile, and scaling results."""
+    fr = full_report(json_crossing("JSON"), samples=20, max_depth=2, max_n=2, seed=42)
+    assert isinstance(fr, FullReport)
+    assert fr.crossing_name == "JSON"
+    assert fr.test_report.total_samples == 20
+    assert len(fr.profile_report.points) == 3  # depths 0, 1, 2
+    assert len(fr.scaling_report.points) == 2  # 1 and 2 boundaries
+
+
+def test_full_report_pickle_lossless():
+    """Full report for pickle should show lossless verdict."""
+    fr = full_report(pickle_crossing("Pickle"), samples=20, max_depth=2, max_n=2, seed=42)
+    assert fr.test_report.lossy_count == 0
+    assert fr.test_report.error_count == 0
+    for p in fr.profile_report.points:
+        assert p.loss_rate == 0.0
+
+
+def test_cli_report(capsys):
+    """CLI report command produces comprehensive output."""
+    cli(["report", "json", "-n", "10", "--seed", "1"])
+    out = capsys.readouterr().out
+    assert "Full Report" in out
+    assert "Round-Trip Test" in out
+    assert "Complexity Profile" in out
+    assert "Scaling" in out
+    assert "Verdict" in out

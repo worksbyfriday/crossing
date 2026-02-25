@@ -909,6 +909,99 @@ def profile(
     return ProfileReport(crossing_name=crossing.name, points=points)
 
 
+@dataclass
+class FullReport:
+    """Comprehensive analysis: test + profile + scaling in one pass."""
+    crossing_name: str
+    test_report: CrossingReport
+    profile_report: ProfileReport
+    scaling_report: ScalingReport
+
+    def print(self):
+        """Print comprehensive analysis."""
+        print(f"\n{'='*60}")
+        print(f"Full Report: {self.crossing_name}")
+        print(f"{'='*60}")
+
+        # Summary
+        tr = self.test_report
+        print(f"\n--- Round-Trip Test ({tr.total_samples} samples) ---")
+        print(f"  Clean: {tr.clean_count} ({tr.clean_count/max(tr.total_samples,1):.0%})  "
+              f"Lossy: {tr.lossy_count} ({tr.loss_rate:.0%})  "
+              f"Errors: {tr.error_count} ({tr.error_count/max(tr.total_samples,1):.0%})")
+        if tr.all_losses:
+            print(f"  Loss types: {', '.join(f'{t}: {c}' for t, c in sorted(tr.loss_types().items(), key=lambda x: -x[1]))}")
+
+        # Profile
+        print(f"\n--- Complexity Profile (depth 0–{len(self.profile_report.points)-1}) ---")
+        print(f"  {'Depth':>5}  {'Loss':>6}  {'Errors':>7}")
+        for p in self.profile_report.points:
+            bar = '█' * int(p.loss_rate * 20)
+            print(f"  {p.depth:5d}  {p.loss_rate:5.0%}  {p.error_rate:6.0%}  {bar}")
+
+        # Scaling
+        print(f"\n--- Scaling (1–{len(self.scaling_report.points)} boundaries) ---")
+        print(f"  {'N':>3}  {'Loss':>6}")
+        for p in self.scaling_report.points:
+            bar = '█' * int(p.loss_rate * 20)
+            print(f"  {p.n_boundaries:3d}  {p.loss_rate:5.0%}  {bar}")
+        if self.scaling_report.exponent is not None:
+            print(f"  Scaling exponent: α ≈ {self.scaling_report.exponent:.3f}")
+        else:
+            print(f"  → Idempotent (constant loss rate)")
+
+        # Verdict
+        print(f"\n--- Verdict ---")
+        if tr.loss_rate == 0 and tr.error_count == 0:
+            print(f"  ✓ Lossless crossing — all data survives the round trip.")
+        elif tr.loss_rate > 0.5:
+            print(f"  ✗ Majority-lossy — {tr.loss_rate:.0%} of inputs lose information.")
+        elif tr.error_count > tr.lossy_count:
+            print(f"  ✗ Error-prone — more crashes ({tr.error_count}) than lossy passages ({tr.lossy_count}).")
+        else:
+            print(f"  ~ Partially lossy — {tr.loss_rate:.0%} of inputs affected.")
+
+        # Idempotency
+        rates = [p.loss_rate for p in self.scaling_report.points]
+        if rates and max(rates) - min(rates) < 0.02:
+            print(f"  ✓ Idempotent — loss happens once, then saturates.")
+        elif self.scaling_report.exponent is not None and self.scaling_report.exponent > 0.5:
+            print(f"  ✗ Non-idempotent — loss accumulates across boundaries (α={self.scaling_report.exponent:.2f}).")
+
+        print()
+
+
+def full_report(
+    crossing: Crossing,
+    samples: int = 200,
+    max_depth: int = 4,
+    max_n: int = 4,
+    seed: int | None = 42,
+) -> FullReport:
+    """Run a comprehensive analysis: test + profile + scaling.
+
+    Args:
+        crossing: The boundary crossing to analyze.
+        samples: Number of random samples for the main test.
+        max_depth: Maximum nesting depth for profiling.
+        max_n: Maximum boundary count for scaling analysis.
+        seed: Random seed for reproducibility.
+
+    Returns:
+        FullReport with test, profile, and scaling results.
+    """
+    test_r = cross(crossing, samples=samples, seed=seed)
+    prof_r = profile(crossing, max_depth=max_depth, samples=samples // 2, seed=seed)
+    scale_r = scaling(crossing, max_n=max_n, samples=samples // 2, seed=seed)
+
+    return FullReport(
+        crossing_name=crossing.name,
+        test_report=test_r,
+        profile_report=prof_r,
+        scaling_report=scale_r,
+    )
+
+
 # --- Built-in crossings for common boundaries ---
 
 def json_crossing(name: str = "JSON round-trip") -> Crossing:
@@ -1270,6 +1363,12 @@ def cli(args: list[str] | None = None) -> None:
     prof_p.add_argument("-n", "--samples", type=int, default=200)
     prof_p.add_argument("--seed", type=int, default=42)
 
+    # crossing report FORMAT
+    rep_p = sub.add_parser("report", help="Comprehensive analysis: test + profile + scaling")
+    rep_p.add_argument("format", choices=list(BUILTIN_CROSSINGS))
+    rep_p.add_argument("-n", "--samples", type=int, default=200)
+    rep_p.add_argument("--seed", type=int, default=42)
+
     # crossing list
     sub.add_parser("list", help="List available built-in crossings")
 
@@ -1307,6 +1406,11 @@ def cli(args: list[str] | None = None) -> None:
         prof_report = profile(c, max_depth=parsed.max_depth, samples=parsed.samples,
                               seed=parsed.seed)
         prof_report.print()
+
+    elif parsed.command == "report":
+        c = BUILTIN_CROSSINGS[parsed.format]()
+        fr = full_report(c, samples=parsed.samples, seed=parsed.seed)
+        fr.print()
 
     elif parsed.command == "list":
         print("Available crossings:")
