@@ -644,6 +644,174 @@ def diff(a: Crossing, b: Crossing, samples: int = 100,
     return report
 
 
+# --- Triangulation: 3-query multi-format comparison ---
+
+@dataclass
+class TriangulationResult:
+    """Result of testing one input through three crossings."""
+    input_value: Any
+    outputs: dict[str, Any]        # crossing_name → output
+    losses: dict[str, list[Loss]]  # crossing_name → losses
+    errors: dict[str, str | None]  # crossing_name → error message
+    shared_losses: list[str]       # loss paths present in ALL crossings
+    unique_losses: dict[str, list[str]]  # crossing_name → paths lost ONLY by that crossing
+
+
+@dataclass
+class TriangulationReport:
+    """Multi-format comparison: test data through 3+ crossings simultaneously.
+
+    Inspired by the RLDC phase transition (Block et al., arXiv 2602.20278):
+    2-query round-trip testing has provable limitations. 3-query comparison
+    enables triangulation — distinguishing inherent data limitations from
+    format-specific losses.
+    """
+    crossing_names: list[str]
+    results: list[TriangulationResult] = field(default_factory=list)
+
+    @property
+    def total_samples(self) -> int:
+        return len(self.results)
+
+    @property
+    def unanimous_loss_count(self) -> int:
+        """Samples where all crossings lost the same information."""
+        return sum(1 for r in self.results if r.shared_losses and not any(r.unique_losses.values()))
+
+    @property
+    def divergent_count(self) -> int:
+        """Samples where at least one crossing lost something unique."""
+        return sum(1 for r in self.results if any(r.unique_losses.values()))
+
+    @property
+    def all_lossless_count(self) -> int:
+        """Samples where no crossing lost anything."""
+        return sum(1 for r in self.results
+                   if not r.shared_losses and not any(r.unique_losses.values())
+                   and not any(r.errors.values()))
+
+    def print(self):
+        """Print triangulation report."""
+        names = self.crossing_names
+        print(f"\n{'='*60}")
+        print(f"Triangulation Report: {' × '.join(names)}")
+        print(f"{'='*60}")
+        print(f"Samples tested:    {self.total_samples}")
+        print(f"All lossless:      {self.all_lossless_count} ({self.all_lossless_count/max(self.total_samples,1):.0%})")
+        print(f"Unanimous loss:    {self.unanimous_loss_count} ({self.unanimous_loss_count/max(self.total_samples,1):.0%})")
+        print(f"Divergent:         {self.divergent_count} ({self.divergent_count/max(self.total_samples,1):.0%})")
+
+        # Per-crossing loss rates
+        print(f"\nPer-crossing loss rates:")
+        for name in names:
+            lossy = sum(1 for r in self.results if r.losses.get(name))
+            print(f"  {name:20s} {lossy/max(self.total_samples,1):.0%}")
+
+        # Show divergent samples
+        divergent = [r for r in self.results if any(r.unique_losses.values())]
+        if divergent:
+            print(f"\nDivergences (first 5):")
+            for r in divergent[:5]:
+                print(f"  Input: {repr(r.input_value)[:80]}")
+                if r.shared_losses:
+                    print(f"    Shared losses: {', '.join(r.shared_losses[:3])}")
+                for name in names:
+                    unique = r.unique_losses.get(name, [])
+                    if unique:
+                        print(f"    Only {name}: {', '.join(unique[:3])}")
+
+        print(f"{'='*60}\n")
+
+
+def triangulate(*crossings: Crossing, samples: int = 100,
+                seed: int | None = None,
+                inputs: list[Any] | None = None) -> TriangulationReport:
+    """Compare 3+ crossings on the same inputs to triangulate loss sources.
+
+    Two-query testing (round-trip through one format) can detect loss but
+    can't distinguish inherent data limitations from format-specific bugs.
+    Three-query testing enables triangulation: if all three formats lose
+    the same information, it's inherent; if only one loses it, it's a
+    format-specific weakness.
+
+    Args:
+        crossings: Three or more crossings to compare (minimum 2, best with 3+)
+        samples: Number of random inputs
+        seed: Random seed for reproducibility
+        inputs: Optional specific inputs to test alongside random ones
+
+    Returns:
+        TriangulationReport showing shared vs unique losses across formats
+    """
+    if len(crossings) < 2:
+        raise ValueError("triangulate() requires at least 2 crossings")
+
+    if seed is not None:
+        random.seed(seed)
+
+    names = [c.name for c in crossings]
+    report = TriangulationReport(crossing_names=names)
+
+    test_inputs: list[Any] = []
+    if inputs:
+        test_inputs.extend(inputs)
+
+    remaining = max(0, samples - len(test_inputs))
+    for _ in range(remaining):
+        test_inputs.append(_generate_value())
+
+    for original in test_inputs:
+        outputs: dict[str, Any] = {}
+        losses: dict[str, list[Loss]] = {}
+        errors: dict[str, str | None] = {}
+
+        for c in crossings:
+            try:
+                encoded = c.encode(original)
+                decoded = c.decode(encoded)
+                found_losses = _compare(original, decoded)
+                outputs[c.name] = decoded
+                losses[c.name] = found_losses
+                errors[c.name] = None
+            except Exception as e:
+                outputs[c.name] = None
+                losses[c.name] = []
+                errors[c.name] = str(e)
+
+        # Compute loss paths per crossing
+        loss_paths: dict[str, set[str]] = {}
+        for name in names:
+            loss_paths[name] = {l.path for l in losses[name]}
+
+        # Shared losses: present in ALL crossings that didn't error
+        active = [name for name in names if errors[name] is None]
+        if len(active) >= 2:
+            shared = set.intersection(*(loss_paths[n] for n in active)) if active else set()
+        else:
+            shared = set()
+
+        # Unique losses: present in exactly one crossing
+        unique: dict[str, list[str]] = {}
+        for name in active:
+            others = [n for n in active if n != name]
+            if others:
+                other_paths = set.union(*(loss_paths[n] for n in others))
+                unique[name] = sorted(loss_paths[name] - other_paths)
+            else:
+                unique[name] = sorted(loss_paths[name])
+
+        report.results.append(TriangulationResult(
+            input_value=original,
+            outputs=outputs,
+            losses=losses,
+            errors=errors,
+            shared_losses=sorted(shared),
+            unique_losses=unique,
+        ))
+
+    return report
+
+
 # --- Built-in crossings for common boundaries ---
 
 def json_crossing(name: str = "JSON round-trip") -> Crossing:
@@ -991,6 +1159,13 @@ def cli(args: list[str] | None = None) -> None:
     scale_p.add_argument("-n", "--samples", type=int, default=200)
     scale_p.add_argument("--seed", type=int, default=42)
 
+    # crossing triangulate FORMAT FORMAT FORMAT ... --samples N
+    tri_p = sub.add_parser("triangulate", help="Compare 3+ crossings to triangulate loss sources")
+    tri_p.add_argument("formats", nargs="+", choices=list(BUILTIN_CROSSINGS),
+                        help="Formats to compare (recommend 3+)")
+    tri_p.add_argument("-n", "--samples", type=int, default=200)
+    tri_p.add_argument("--seed", type=int, default=42)
+
     # crossing list
     sub.add_parser("list", help="List available built-in crossings")
 
@@ -1017,6 +1192,11 @@ def cli(args: list[str] | None = None) -> None:
         c = BUILTIN_CROSSINGS[parsed.format]()
         sr = scaling(c, max_n=parsed.max_n, samples=parsed.samples, seed=parsed.seed)
         sr.print()
+
+    elif parsed.command == "triangulate":
+        crossings_list = [BUILTIN_CROSSINGS[f]() for f in parsed.formats]
+        tri_report = triangulate(*crossings_list, samples=parsed.samples, seed=parsed.seed)
+        tri_report.print()
 
     elif parsed.command == "list":
         print("Available crossings:")

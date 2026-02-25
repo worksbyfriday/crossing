@@ -3,9 +3,10 @@
 import pytest
 from crossing import (
     Crossing, CrossingReport, Loss, cross, _compare, compose, diff,
-    DiffReport, scaling, ScalingReport, cli, BUILTIN_CROSSINGS,
+    DiffReport, scaling, ScalingReport, triangulate, cli, BUILTIN_CROSSINGS,
     json_crossing, json_crossing_strict, pickle_crossing,
-    string_truncation_crossing,
+    string_truncation_crossing, str_crossing, csv_crossing,
+    env_file_crossing,
 )
 
 
@@ -317,6 +318,48 @@ def test_diff_report_counts():
     """DiffReport counts should be consistent."""
     report = diff(json_crossing("A"), pickle_crossing("B"), samples=50, seed=42)
     assert report.equivalent_count + report.divergent_count == report.total_samples
+
+
+def test_triangulate_basic():
+    """Triangulation across 3 crossings finds shared and unique losses."""
+    report = triangulate(
+        json_crossing("JSON"),
+        pickle_crossing("Pickle"),
+        str_crossing("Str"),
+        samples=50, seed=42,
+    )
+    assert report.total_samples == 50
+    assert len(report.crossing_names) == 3
+    # Pickle is lossless, so any losses Pickle has should be shared
+    # But Str should have many unique losses (it stringifies everything)
+    assert report.divergent_count > 0
+
+
+def test_triangulate_two_crossings():
+    """Triangulate works with minimum 2 crossings."""
+    report = triangulate(
+        json_crossing("JSON"),
+        pickle_crossing("Pickle"),
+        samples=20, seed=42,
+    )
+    assert report.total_samples == 20
+
+
+def test_triangulate_shared_vs_unique():
+    """Shared losses appear in all crossings; unique losses in only one."""
+    report = triangulate(
+        json_crossing("JSON"),
+        csv_crossing("CSV"),
+        env_file_crossing("ENV"),
+        samples=30, seed=42,
+    )
+    for r in report.results:
+        # Shared losses should be a subset of each crossing's losses
+        for name in report.crossing_names:
+            if r.errors.get(name) is None:
+                crossing_paths = {l.path for l in r.losses.get(name, [])}
+                for shared in r.shared_losses:
+                    assert shared in crossing_paths
 
 
 def test_scaling_idempotent_crossing():
