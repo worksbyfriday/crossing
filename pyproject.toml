@@ -28,8 +28,8 @@ keywords = ["testing", "exceptions", "semantic-analysis", "data-loss", "boundari
 
 [project.optional-dependencies]
 yaml = ["pyyaml>=6.0"]
-toml = ["tomli_w>=1.0"]
-all = ["pyyaml>=6.0", "tomli_w>=1.0"]
+toml = ["tomli_w>=1.0", "tomli>=2.0; python_version < '3.11'"]
+all = ["pyyaml>=6.0", "tomli_w>=1.0", "tomli>=2.0; python_version < '3.11'"]
 
 [project.urls]
 Homepage = "https://fridayops.xyz"

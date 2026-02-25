@@ -744,7 +744,10 @@ def toml_crossing(name: str = "TOML round-trip") -> Crossing:
     no top-level arrays/scalars (must be a table), datetime is
     first-class but many Python types aren't representable.
     """
-    import tomllib
+    try:
+        import tomllib
+    except ModuleNotFoundError:
+        import tomli as tomllib  # Python 3.10 backport
     import tomli_w
 
     def encode(d: Any) -> str:
