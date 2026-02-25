@@ -134,6 +134,8 @@ class ExceptionHandler:
     assigns_default: bool  # does the handler assign a default value?
     try_scope_id: int | None = None  # ID of the try block this handler belongs to
     direct_raises_in_scope: int = 0  # explicit raises of this type in the try body
+    uses_exception: bool = False  # does the handler use the bound exception variable?
+    binds_exception: bool = False  # does the handler bind the exception to a name?
 
     def __str__(self):
         loc = f"{self.in_class}.{self.in_function}" if self.in_class else self.in_function
@@ -225,6 +227,9 @@ class SemanticCrossing:
         for h in self.handler_sites:
             if h.re_raises:
                 total_capacity += 1.0  # Full preservation
+            elif h.uses_exception:
+                # Handler inspects the exception — partial preservation
+                total_capacity += 0.7
             elif h.direct_raises_in_scope > 0:
                 # Handler is near the raise — likely knows the context
                 total_capacity += 0.5
@@ -441,7 +446,12 @@ class SemanticScanReport:
                 print(f"    ... and {len(crossing.raise_sites) - 5} more")
             print(f"  Handlers:")
             for h in crossing.handler_sites[:5]:
-                print(f"    {h}")
+                usage = ""
+                if h.binds_exception and h.uses_exception:
+                    usage = " [inspects exc]"
+                elif h.binds_exception and not h.uses_exception:
+                    usage = " [binds but ignores exc]"
+                print(f"    {h}{usage}")
             if len(crossing.handler_sites) > 5:
                 print(f"    ... and {len(crossing.handler_sites) - 5} more")
 
@@ -742,6 +752,12 @@ class SemanticVisitor(ast.NodeVisitor):
             elif isinstance(stmt, ast.Assign):
                 assigns_default = True
 
+        # Check if handler binds and uses the exception variable
+        binds_exception = node.name is not None
+        uses_exception = False
+        if binds_exception:
+            uses_exception = self._name_used_in(node.name, node.body)
+
         body_summary = self._summarize_handler_body(node.body)
 
         # Count direct raises of this type in the corresponding try body
@@ -767,6 +783,8 @@ class SemanticVisitor(ast.NodeVisitor):
             assigns_default=assigns_default,
             try_scope_id=scope_id,
             direct_raises_in_scope=direct_raises,
+            uses_exception=uses_exception,
+            binds_exception=binds_exception,
         ))
         self.generic_visit(node)
 
@@ -826,6 +844,13 @@ class SemanticVisitor(ast.NodeVisitor):
                 elif line.startswith(("def ", "class ", "except ")):
                     break  # hit scope boundary, stop
         return f"in {self._current_function}"
+
+    def _name_used_in(self, name: str, body: list[ast.stmt]) -> bool:
+        """Check if a variable name is referenced in any of the given statements."""
+        for node in ast.walk(ast.Module(body=body, type_ignores=[])):
+            if isinstance(node, ast.Name) and node.id == name:
+                return True
+        return False
 
     def _summarize_handler_body(self, body: list[ast.stmt]) -> str:
         """Summarize what the handler does."""

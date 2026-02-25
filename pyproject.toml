@@ -44,3 +44,6 @@ crossing-semantic = "semantic_scan:main"
 
 [tool.setuptools]
 py-modules = ["crossing", "scan", "semantic_scan", "report"]
+
+[tool.pytest.ini_options]
+testpaths = ["test_crossing.py"]
