@@ -17,7 +17,7 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install
-        run: pip install -e . && pip install pytest
+        run: pip install -e ".[all]" && pip install pytest
       - name: Run tests
         run: python -m pytest test_semantic_scan.py test_crossing.py -v
       - name: Self-scan

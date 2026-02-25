@@ -1018,8 +1018,11 @@ def cli(args: list[str] | None = None) -> None:
     elif parsed.command == "list":
         print("Available crossings:")
         for name, factory in BUILTIN_CROSSINGS.items():
-            c = factory()
-            print(f"  {name:15s} {c.name}")
+            try:
+                c = factory()
+                print(f"  {name:15s} {c.name}")
+            except (ImportError, ModuleNotFoundError):
+                print(f"  {name:15s} (not installed)")
 
     else:
         parser.print_help()
