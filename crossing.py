@@ -812,6 +812,103 @@ def triangulate(*crossings: Crossing, samples: int = 100,
     return report
 
 
+@dataclass
+class ProfilePoint:
+    """One measurement of loss at a given complexity level."""
+    depth: int
+    loss_rate: float
+    mean_losses_per_sample: float
+    error_rate: float
+    total_samples: int
+
+
+@dataclass
+class ProfileReport:
+    """How information loss varies with input complexity."""
+    crossing_name: str
+    points: list[ProfilePoint]
+
+    def print(self):
+        """Print complexity profile results."""
+        print(f"\n=== Complexity Profile: {self.crossing_name} ===\n")
+        print(f"{'Depth':>6}  {'Loss Rate':>10}  {'Mean Losses':>12}  {'Error Rate':>11}")
+        print(f"{'─'*6}  {'─'*10}  {'─'*12}  {'─'*11}")
+        for p in self.points:
+            print(f"{p.depth:6d}  {p.loss_rate:10.1%}  {p.mean_losses_per_sample:12.2f}  {p.error_rate:11.1%}")
+
+        # Identify the transition
+        rates = [p.loss_rate for p in self.points]
+        if rates:
+            min_r, max_r = min(rates), max(rates)
+            if max_r - min_r > 0.1:
+                # Find where loss rate first exceeds midpoint
+                mid = (min_r + max_r) / 2
+                for p in self.points:
+                    if p.loss_rate >= mid:
+                        print(f"\n→ Loss transition near depth {p.depth} "
+                              f"(rate jumps from {min_r:.0%} to {max_r:.0%})")
+                        break
+            else:
+                print(f"\n→ Loss rate stable across depths ({min_r:.0%}–{max_r:.0%})")
+
+
+def profile(
+    crossing: Crossing,
+    max_depth: int = 6,
+    samples: int = 200,
+    seed: int | None = 42,
+) -> ProfileReport:
+    """Measure how information loss varies with input complexity.
+
+    Generates inputs at increasing nesting depths and measures loss rate.
+    Shallow inputs (depth 0-1) are scalars and flat dicts/lists.
+    Deep inputs (depth 4+) are heavily nested structures with diverse types.
+
+    This reveals the "phase boundary" between lossless and lossy data
+    for a given crossing — the complexity at which losses begin.
+
+    Args:
+        crossing: The boundary crossing to profile.
+        max_depth: Maximum nesting depth to test.
+        samples: Number of random samples per depth level.
+        seed: Random seed for reproducibility.
+
+    Returns:
+        ProfileReport with loss rates at each depth.
+    """
+    points = []
+
+    for depth in range(max_depth + 1):
+        if seed is not None:
+            random.seed(seed + depth)
+
+        inputs = [_generate_value(depth=0, max_depth=depth) for _ in range(samples)]
+        losses_count = 0
+        total_losses = 0
+        errors = 0
+
+        for original in inputs:
+            try:
+                encoded = crossing.encode(original)
+                decoded = crossing.decode(encoded)
+                sample_losses = _compare(original, decoded)
+                if sample_losses:
+                    losses_count += 1
+                total_losses += len(sample_losses)
+            except Exception:
+                errors += 1
+
+        points.append(ProfilePoint(
+            depth=depth,
+            loss_rate=losses_count / max(samples, 1),
+            mean_losses_per_sample=total_losses / max(samples, 1),
+            error_rate=errors / max(samples, 1),
+            total_samples=samples,
+        ))
+
+    return ProfileReport(crossing_name=crossing.name, points=points)
+
+
 # --- Built-in crossings for common boundaries ---
 
 def json_crossing(name: str = "JSON round-trip") -> Crossing:
@@ -1166,6 +1263,13 @@ def cli(args: list[str] | None = None) -> None:
     tri_p.add_argument("-n", "--samples", type=int, default=200)
     tri_p.add_argument("--seed", type=int, default=42)
 
+    # crossing profile FORMAT --max-depth N --samples N
+    prof_p = sub.add_parser("profile", help="Profile loss rate vs input complexity")
+    prof_p.add_argument("format", choices=list(BUILTIN_CROSSINGS))
+    prof_p.add_argument("--max-depth", type=int, default=6)
+    prof_p.add_argument("-n", "--samples", type=int, default=200)
+    prof_p.add_argument("--seed", type=int, default=42)
+
     # crossing list
     sub.add_parser("list", help="List available built-in crossings")
 
@@ -1197,6 +1301,12 @@ def cli(args: list[str] | None = None) -> None:
         crossings_list = [BUILTIN_CROSSINGS[f]() for f in parsed.formats]
         tri_report = triangulate(*crossings_list, samples=parsed.samples, seed=parsed.seed)
         tri_report.print()
+
+    elif parsed.command == "profile":
+        c = BUILTIN_CROSSINGS[parsed.format]()
+        prof_report = profile(c, max_depth=parsed.max_depth, samples=parsed.samples,
+                              seed=parsed.seed)
+        prof_report.print()
 
     elif parsed.command == "list":
         print("Available crossings:")

@@ -3,7 +3,8 @@
 import pytest
 from crossing import (
     Crossing, CrossingReport, Loss, cross, _compare, compose, diff,
-    DiffReport, scaling, ScalingReport, triangulate, cli, BUILTIN_CROSSINGS,
+    DiffReport, scaling, ScalingReport, triangulate, profile, ProfileReport,
+    cli, BUILTIN_CROSSINGS,
     json_crossing, json_crossing_strict, pickle_crossing,
     string_truncation_crossing, str_crossing, csv_crossing,
     env_file_crossing,
@@ -360,6 +361,31 @@ def test_triangulate_shared_vs_unique():
                 crossing_paths = {l.path for l in r.losses.get(name, [])}
                 for shared in r.shared_losses:
                     assert shared in crossing_paths
+
+
+def test_profile_basic():
+    """Profile should return measurements for each depth level."""
+    report = profile(json_crossing("JSON"), max_depth=4, samples=50, seed=42)
+    assert isinstance(report, ProfileReport)
+    assert len(report.points) == 5  # depths 0, 1, 2, 3, 4
+    assert report.crossing_name == "JSON"
+    for p in report.points:
+        assert 0 <= p.loss_rate <= 1
+        assert 0 <= p.error_rate <= 1
+
+
+def test_profile_pickle_lossless():
+    """Pickle should be lossless at all depths."""
+    report = profile(pickle_crossing("Pickle"), max_depth=4, samples=50, seed=42)
+    for p in report.points:
+        assert p.loss_rate == 0.0
+        assert p.error_rate == 0.0
+
+
+def test_profile_csv_lossy():
+    """CSV should show losses even at depth 0 (scalars)."""
+    report = profile(csv_crossing("CSV"), max_depth=2, samples=50, seed=42)
+    assert report.points[0].loss_rate > 0  # CSV loses info even on scalars
 
 
 def test_scaling_idempotent_crossing():
