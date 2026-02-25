@@ -3,7 +3,7 @@
 import pytest
 from crossing import (
     Crossing, CrossingReport, Loss, cross, _compare, compose, diff,
-    DiffReport,
+    DiffReport, scaling, ScalingReport,
     json_crossing, json_crossing_strict, pickle_crossing,
     string_truncation_crossing,
 )
@@ -322,6 +322,24 @@ def test_diff_report_counts():
 if __name__ == "__main__":
     import sys
     passed = 0
+def test_scaling_idempotent_crossing():
+    """Homogeneous composition of idempotent crossings should have exponent near 0."""
+    sr = scaling(json_crossing("JSON"), max_n=4, samples=100, seed=42)
+    assert isinstance(sr, ScalingReport)
+    assert len(sr.points) == 4
+    # JSON is idempotent: all points should have the same loss rate
+    rates = [p.loss_rate for p in sr.points]
+    assert all(abs(r - rates[0]) < 0.01 for r in rates), f"Rates diverge: {rates}"
+
+
+def test_scaling_idempotent_no_exponent():
+    """Idempotent crossings have constant loss — power law fit returns None."""
+    sr = scaling(json_crossing("JSON"), max_n=4, samples=100, seed=42)
+    # When all loss rates are identical, there's no variation to fit
+    # so exponent should be None (can't determine scaling from flat data)
+    assert sr.exponent is None, f"Expected None for flat data, got {sr.exponent}"
+
+
     failed = 0
     for name, func in sorted(globals().items()):
         if name.startswith("test_") and callable(func):

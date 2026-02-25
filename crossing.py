@@ -832,6 +832,116 @@ def env_file_crossing(name: str = "env file round-trip") -> Crossing:
     return Crossing(encode=encode, decode=decode, name=name)
 
 
+@dataclass
+class ScalingPoint:
+    """One measurement of loss at a given boundary count."""
+    n_boundaries: int
+    loss_rate: float
+    mean_losses_per_sample: float
+    error_rate: float
+    total_samples: int
+
+
+@dataclass
+class ScalingReport:
+    """How information loss scales with boundary count."""
+    crossing_name: str
+    points: list[ScalingPoint]
+    exponent: float | None = None  # power law fit: loss ~ n^alpha
+    r_squared: float | None = None
+
+    def print(self):
+        """Print scaling analysis results."""
+        print(f"\n=== Scaling Analysis: {self.crossing_name} ===\n")
+        print(f"{'N':>4}  {'Loss Rate':>10}  {'Mean Losses':>12}  {'Error Rate':>11}")
+        print(f"{'─'*4}  {'─'*10}  {'─'*12}  {'─'*11}")
+        for p in self.points:
+            print(f"{p.n_boundaries:4d}  {p.loss_rate:10.1%}  {p.mean_losses_per_sample:12.2f}  {p.error_rate:11.1%}")
+
+        if self.exponent is not None:
+            print(f"\nScaling exponent α ≈ {self.exponent:.3f}  (loss_rate ~ N^α)")
+            print(f"R² = {self.r_squared:.4f}")
+            if self.exponent < 0.5:
+                print("→ Sub-linear: boundaries partially absorb each other's losses")
+            elif self.exponent < 1.1:
+                print("→ Linear: each boundary adds independent loss")
+            else:
+                print("→ Super-linear: boundaries amplify each other's losses")
+
+
+def scaling(
+    crossing: Crossing,
+    max_n: int = 8,
+    samples: int = 200,
+    seed: int | None = 42,
+) -> ScalingReport:
+    """Measure how information loss scales with boundary count.
+
+    Composes 1, 2, 3, ..., max_n copies of the same crossing
+    and measures loss rate at each level. Fits a power law
+    to determine the scaling exponent.
+
+    Args:
+        crossing: The boundary crossing to compose repeatedly.
+        max_n: Maximum number of composed boundaries to test.
+        samples: Number of random samples per measurement.
+        seed: Random seed for reproducibility.
+
+    Returns:
+        ScalingReport with measurements and power law fit.
+    """
+    points = []
+
+    for n in range(1, max_n + 1):
+        if n == 1:
+            c = crossing
+        else:
+            c = compose(*[crossing] * n, name=f"{crossing.name} ×{n}")
+
+        report = cross(c, samples=samples, seed=seed)
+
+        mean_losses = report.total_loss_events / max(report.total_samples, 1)
+        points.append(ScalingPoint(
+            n_boundaries=n,
+            loss_rate=report.loss_rate,
+            mean_losses_per_sample=mean_losses,
+            error_rate=report.error_count / max(report.total_samples, 1),
+            total_samples=report.total_samples,
+        ))
+
+    # Fit power law: loss_rate = a * n^alpha
+    # Take log of both sides: log(loss_rate) = log(a) + alpha * log(n)
+    exponent = None
+    r_squared = None
+
+    # Filter to points with non-zero loss rate for log fitting
+    valid = [(p.n_boundaries, p.loss_rate) for p in points if p.loss_rate > 0]
+
+    if len(valid) >= 3:
+        log_n = [math.log(n) for n, _ in valid]
+        log_loss = [math.log(lr) for _, lr in valid]
+
+        # Simple linear regression on log-log
+        n_pts = len(valid)
+        mean_x = sum(log_n) / n_pts
+        mean_y = sum(log_loss) / n_pts
+
+        ss_xy = sum((x - mean_x) * (y - mean_y) for x, y in zip(log_n, log_loss))
+        ss_xx = sum((x - mean_x) ** 2 for x in log_n)
+        ss_yy = sum((y - mean_y) ** 2 for y in log_loss)
+
+        if ss_xx > 0 and ss_yy > 0:
+            exponent = ss_xy / ss_xx
+            r_squared = (ss_xy ** 2) / (ss_xx * ss_yy)
+
+    return ScalingReport(
+        crossing_name=crossing.name,
+        points=points,
+        exponent=exponent,
+        r_squared=r_squared,
+    )
+
+
 if __name__ == "__main__":
     print("crossing — detect silent information loss at system boundaries\n")
 
@@ -868,3 +978,8 @@ if __name__ == "__main__":
     )
     report = cross(pipeline, samples=200, seed=42)
     report.print()
+
+    # Scaling analysis: how does loss grow with boundary count?
+    print("\n--- Scaling Analysis ---\n")
+    sr = scaling(json_crossing("JSON"), max_n=6, samples=300, seed=42)
+    sr.print()
